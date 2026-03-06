@@ -1,17 +1,17 @@
 package usecase
 
 import (
-	"Baby-Rabbit/cmd/internal/domain"
+	domain2 "Baby-Rabbit/internal/domain"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type QueueUseCase struct {
-	manager domain.QueueManager
+	manager domain2.QueueManager
 }
 
-func NewQueueUseCase(m domain.QueueManager) *QueueUseCase {
+func NewQueueUseCase(m domain2.QueueManager) *QueueUseCase {
 	return &QueueUseCase{manager: m}
 }
 
@@ -25,7 +25,7 @@ func (u *QueueUseCase) Push(queue string, value string, ttl int) error {
 		return err
 	}
 
-	msg := domain.Message{
+	msg := domain2.Message{
 		ID:        uuid.New().String(),
 		Value:     value,
 		CreatedAt: time.Now(),
@@ -35,10 +35,10 @@ func (u *QueueUseCase) Push(queue string, value string, ttl int) error {
 	return q.Push(msg)
 }
 
-func (u *QueueUseCase) Pop(queue string) (domain.Message, error) {
+func (u *QueueUseCase) Pop(queue string) (domain2.Message, error) {
 	q, err := u.manager.GetQueue(queue)
 	if err != nil {
-		return domain.Message{}, err
+		return domain2.Message{}, err
 	}
 
 	return q.Pop()

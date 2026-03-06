@@ -1,8 +1,8 @@
 package http
 
 import (
-	"Baby-Rabbit/cmd/internal/pkg/logger"
-	"Baby-Rabbit/cmd/internal/usecase"
+	"Baby-Rabbit/internal/pkg/logger"
+	"Baby-Rabbit/internal/usecase"
 
 	"github.com/gin-gonic/gin"
 )

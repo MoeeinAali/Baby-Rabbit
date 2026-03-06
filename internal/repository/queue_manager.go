@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"Baby-Rabbit/cmd/internal/domain"
-	"Baby-Rabbit/cmd/internal/pkg/logger"
+	"Baby-Rabbit/internal/domain"
+	"Baby-Rabbit/internal/pkg/logger"
 	"errors"
 	"sync"
 )
