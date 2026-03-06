@@ -14,7 +14,7 @@ func main() {
 	logger.Init()
 	defer logger.Sync()
 
-	logger.Log.Info("Starting Baby-Rabbit server")
+	logger.Log.Info("Starting Baby-Rabbit server...")
 
 	manager := repository.NewQueueManager()
 	useCase := usecase.NewQueueUseCase(manager)
@@ -22,6 +22,7 @@ func main() {
 
 	service.StartTTLCleaner(manager)
 
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
 	r.POST("/queues", handler.CreateQueue)
@@ -29,5 +30,5 @@ func main() {
 	r.POST("/queues/:queue/pop", handler.Pop)
 
 	logger.Log.Info("HTTP server started on :8080")
-	r.Run(":8080")
+	_ = r.Run(":8080")
 }
