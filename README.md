@@ -4,19 +4,6 @@ A high-performance, thread-safe queue service with TTL (Time-To-Live) support bu
 
 ---
 
-## 📋 Table of Contents
-
-- [Features](#features)
-- [Architecture & Design](#architecture--design)
-- [Project Structure](#project-structure)
-- [Installation & Setup](#installation--setup)
-- [API Endpoints](#api-endpoints)
-- [Usage Examples](#usage-examples)
-- [Clean Architecture Implementation](#clean-architecture-implementation)
-- [Architecture Analysis](#architecture-analysis)
-
----
-
 ## ✨ Features
 
 - **Ring Buffer Queue**: Circular queues for optimal performance
@@ -81,7 +68,7 @@ graph TB
 
 #### 2. **Use Case Layer**
    - Contains the main business logic
-   - Independent from implementation details
+   - Independent of implementation details
    - Acts as a bridge between Delivery and Domain/Repository
 
 #### 3. **Domain Layer**
@@ -197,9 +184,14 @@ POST /queues
 **Success Response:**
 ```json
 {
-  "status": "queue created"
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "my-queue"
 }
 ```
+
+**Response Fields:**
+- `id` (string): Unique identifier (UUID) for the queue
+- `name` (string): Queue name
 
 **Example with cURL:**
 ```bash
@@ -218,7 +210,7 @@ POST /queues/:queue/push
 ```
 
 **Parameters:**
-- `queue`: Queue name
+- `queue`: Queue ID (UUID)
 
 **Request:**
 ```json
@@ -228,7 +220,7 @@ POST /queues/:queue/push
 }
 ```
 
-**Parameters:**
+**Request Fields:**
 - `value` (string): Message content
 - `ttl` (integer): Expiration time in seconds
 
@@ -241,7 +233,7 @@ POST /queues/:queue/push
 
 **Example with cURL:**
 ```bash
-curl -X POST http://localhost:8080/queues/my-queue/push \
+curl -X POST http://localhost:8080/queues/550e8400-e29b-41d4-a716-446655440000/push \
   -H "Content-Type: application/json" \
   -d '{"value":"Hello, World!","ttl":3600}'
 ```
@@ -256,7 +248,7 @@ POST /queues/:queue/pop
 ```
 
 **Parameters:**
-- `queue`: Queue name
+- `queue`: Queue ID (UUID)
 
 **Success Response:**
 ```json
@@ -267,7 +259,7 @@ POST /queues/:queue/pop
 
 **Example with cURL:**
 ```bash
-curl -X POST http://localhost:8080/queues/my-queue/pop \
+curl -X POST http://localhost:8080/queues/550e8400-e29b-41d4-a716-446655440000/pop \
   -H "Content-Type: application/json"
 ```
 

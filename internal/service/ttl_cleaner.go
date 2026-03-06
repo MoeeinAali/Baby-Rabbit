@@ -10,8 +10,8 @@ func StartTTLCleaner(manager domain.QueueManager) {
 
 	go func() {
 		for range ticker.C {
-			for _, name := range manager.ListQueues() {
-				q, _ := manager.GetQueue(name)
+			for _, metadata := range manager.ListQueues() {
+				q, _ := manager.GetQueue(metadata.ID)
 				q.RemoveExpired()
 			}
 		}

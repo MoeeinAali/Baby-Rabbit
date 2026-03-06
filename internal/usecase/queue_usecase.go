@@ -15,12 +15,12 @@ func NewQueueUseCase(m domain2.QueueManager) *QueueUseCase {
 	return &QueueUseCase{manager: m}
 }
 
-func (u *QueueUseCase) CreateQueue(name string, capacity int) error {
+func (u *QueueUseCase) CreateQueue(name string, capacity int) (string, error) {
 	return u.manager.CreateQueue(name, capacity)
 }
 
-func (u *QueueUseCase) Push(queue string, value string, ttl int) error {
-	q, err := u.manager.GetQueue(queue)
+func (u *QueueUseCase) Push(queueID string, value string, ttl int) error {
+	q, err := u.manager.GetQueue(queueID)
 	if err != nil {
 		return err
 	}
@@ -35,8 +35,8 @@ func (u *QueueUseCase) Push(queue string, value string, ttl int) error {
 	return q.Push(msg)
 }
 
-func (u *QueueUseCase) Pop(queue string) (domain2.Message, error) {
-	q, err := u.manager.GetQueue(queue)
+func (u *QueueUseCase) Pop(queueID string) (domain2.Message, error) {
+	q, err := u.manager.GetQueue(queueID)
 	if err != nil {
 		return domain2.Message{}, err
 	}
@@ -44,6 +44,6 @@ func (u *QueueUseCase) Pop(queue string) (domain2.Message, error) {
 	return q.Pop()
 }
 
-func (u *QueueUseCase) ListQueues() []string {
+func (u *QueueUseCase) ListQueues() []domain2.QueueMetadata {
 	return u.manager.ListQueues()
 }

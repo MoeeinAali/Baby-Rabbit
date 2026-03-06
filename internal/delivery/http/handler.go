@@ -20,6 +20,11 @@ type CreateQueueReq struct {
 	Capacity int    `json:"capacity"`
 }
 
+type CreateQueueResp struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 func (h *Handler) CreateQueue(c *gin.Context) {
 	var req CreateQueueReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -27,14 +32,17 @@ func (h *Handler) CreateQueue(c *gin.Context) {
 		return
 	}
 
-	err := h.usecase.CreateQueue(req.Name, req.Capacity)
+	queueID, err := h.usecase.CreateQueue(req.Name, req.Capacity)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	logger.Log.Infof("HTTP CreateQueue %s", req.Name)
-	c.JSON(200, gin.H{"status": "queue created"})
+	logger.Log.Infof("HTTP CreateQueue %s with ID %s", req.Name, queueID)
+	c.JSON(200, CreateQueueResp{
+		ID:   queueID,
+		Name: req.Name,
+	})
 }
 
 type PushReq struct {
@@ -43,32 +51,32 @@ type PushReq struct {
 }
 
 func (h *Handler) Push(c *gin.Context) {
-	queue := c.Param("queue")
+	queueID := c.Param("queue")
 	var req PushReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := h.usecase.Push(queue, req.Value, req.TTL)
+	err := h.usecase.Push(queueID, req.Value, req.TTL)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	logger.Log.Infof("HTTP Push to queue %s", queue)
+	logger.Log.Infof("HTTP Push to queue %s", queueID)
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
 func (h *Handler) Pop(c *gin.Context) {
-	queue := c.Param("queue")
+	queueID := c.Param("queue")
 
-	msg, err := h.usecase.Pop(queue)
+	msg, err := h.usecase.Pop(queueID)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	logger.Log.Infof("HTTP Pop from queue %s, message %s", queue, msg.ID)
+	logger.Log.Infof("HTTP Pop from queue %s, message %s", queueID, msg.ID)
 	c.JSON(200, gin.H{"value": msg.Value})
 }

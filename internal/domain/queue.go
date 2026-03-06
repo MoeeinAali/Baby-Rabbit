@@ -7,3 +7,9 @@ type Queue interface {
 	Capacity() int
 	RemoveExpired()
 }
+
+type QueueMetadata struct {
+	ID       string
+	Name     string
+	Capacity int
+}
