@@ -49,7 +49,7 @@ func (q *RingBufferQueue) Pop() (domain.Message, error) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	for q.size == 0 {
+	if q.size == 0 {
 		q.cond.Wait()
 	}
 
