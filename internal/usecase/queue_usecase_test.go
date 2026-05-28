@@ -21,7 +21,7 @@ type fixedClock struct{ t time.Time }
 func (c fixedClock) Now() time.Time { return c.t }
 
 func newSvc() *QueueUseCase {
-	return NewQueueUseCase(repository.NewQueueManager(), &seqID{}, fixedClock{t: time.Now()})
+	return NewQueueUseCase(repository.NewQueueManager(nil), &seqID{}, fixedClock{t: time.Now()})
 }
 
 func TestUseCase_CreateRejectsEmptyName(t *testing.T) {

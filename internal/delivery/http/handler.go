@@ -104,7 +104,7 @@ func writeDomainError(c *gin.Context, err error) {
 	case errors.Is(err, domain.ErrQueueFull):
 		c.JSON(http.StatusConflict, errorResp{Error: err.Error()})
 	case errors.Is(err, domain.ErrQueueEmpty):
-		c.JSON(http.StatusNoContent, nil)
+		c.Status(http.StatusNoContent)
 	case errors.Is(err, domain.ErrInvalidCapacity),
 		errors.Is(err, domain.ErrInvalidName),
 		errors.Is(err, domain.ErrInvalidTTL):

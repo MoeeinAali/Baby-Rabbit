@@ -5,21 +5,24 @@ import (
 	"time"
 
 	"Baby-Rabbit/internal/domain"
-	"Baby-Rabbit/internal/pkg/logger"
 )
 
 // TTLCleaner periodically asks every queue to drop expired messages.
-// It depends only on the domain.QueueManager port.
+// It depends only on domain ports — never on a concrete logger or clock.
 type TTLCleaner struct {
 	manager  domain.QueueManager
+	log      domain.Logger
 	interval time.Duration
 }
 
-func NewTTLCleaner(m domain.QueueManager, interval time.Duration) *TTLCleaner {
+func NewTTLCleaner(m domain.QueueManager, log domain.Logger, interval time.Duration) *TTLCleaner {
+	if log == nil {
+		log = domain.Nop{}
+	}
 	if interval <= 0 {
 		interval = time.Second
 	}
-	return &TTLCleaner{manager: m, interval: interval}
+	return &TTLCleaner{manager: m, log: log, interval: interval}
 }
 
 // Run blocks until ctx is canceled, periodically sweeping expired messages.
@@ -30,7 +33,7 @@ func (c *TTLCleaner) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Log.Info("ttl cleaner stopped")
+			c.log.Infof("ttl cleaner stopped")
 			return
 		case <-ticker.C:
 			c.sweep()
@@ -45,7 +48,7 @@ func (c *TTLCleaner) sweep() {
 			continue
 		}
 		if removed := q.RemoveExpired(); removed > 0 {
-			logger.Log.Debugf("ttl cleaner removed %d expired messages from %s", removed, meta.Name)
+			c.log.Debugf("ttl cleaner removed %d expired messages from %s", removed, meta.Name)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"os/signal"
 	"syscall"
@@ -27,10 +28,13 @@ const (
 // injects them into the inner layers. Inner layers know nothing about
 // gin, uuid, zap, etc.
 func main() {
-	logger.Init()
-	defer logger.Sync()
+	zlog, err := logger.NewZap()
+	if err != nil {
+		log.Fatalf("logger init: %v", err)
+	}
+	defer zlog.Sync()
 
-	manager := repository.NewQueueManager()
+	manager := repository.NewQueueManager(repository.RingBufferFactory{})
 	svc := usecase.NewQueueUseCase(manager, idgen.UUID{}, clock.Real{})
 	handler := httpDelivery.NewHandler(svc)
 	router := httpDelivery.NewRouter(handler)
@@ -38,7 +42,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cleaner := service.NewTTLCleaner(manager, ttlSweepInterval)
+	cleaner := service.NewTTLCleaner(manager, zlog, ttlSweepInterval)
 	go cleaner.Run(ctx)
 
 	srv := &http.Server{
@@ -48,18 +52,18 @@ func main() {
 	}
 
 	go func() {
-		logger.Log.Infof("Baby-Rabbit listening on %s", listenAddr)
+		zlog.Infof("Baby-Rabbit listening on %s", listenAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Log.Fatalf("server error: %v", err)
+			zlog.Fatalf("server error: %v", err)
 		}
 	}()
 
 	<-ctx.Done()
-	logger.Log.Info("shutdown signal received")
+	zlog.Infof("shutdown signal received")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Log.Errorf("graceful shutdown failed: %v", err)
+		zlog.Errorf("graceful shutdown failed: %v", err)
 	}
 }
