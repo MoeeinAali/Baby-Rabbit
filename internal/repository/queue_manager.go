@@ -1,19 +1,17 @@
 package repository
 
 import (
-	"Baby-Rabbit/internal/domain"
-	"Baby-Rabbit/internal/pkg/logger"
-	"errors"
 	"sync"
 
-	"github.com/google/uuid"
+	"Baby-Rabbit/internal/domain"
 )
 
+// QueueManager is an in-memory implementation of domain.QueueManager.
 type QueueManager struct {
-	queues    map[string]domain.Queue         // key: UUID
-	metadata  map[string]domain.QueueMetadata // key: UUID
-	nameIndex map[string]string               // key: name, value: UUID
-	mutex     sync.RWMutex
+	mu        sync.RWMutex
+	queues    map[string]domain.Queue
+	metadata  map[string]domain.QueueMetadata
+	nameIndex map[string]string
 }
 
 func NewQueueManager() *QueueManager {
@@ -24,54 +22,44 @@ func NewQueueManager() *QueueManager {
 	}
 }
 
-func (m *QueueManager) CreateQueue(name string, capacity int) (string, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+func (m *QueueManager) CreateQueue(meta domain.QueueMetadata) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if _, exists := m.nameIndex[name]; exists {
-		logger.Log.Warnf("Queue already exists: %s", name)
-		return "", errors.New("queue already exists")
+	if _, exists := m.nameIndex[meta.Name]; exists {
+		return domain.ErrQueueAlreadyExists
 	}
-
-	queueID := uuid.New().String()
-	m.queues[queueID] = NewRingBufferQueue(capacity)
-	m.metadata[queueID] = domain.QueueMetadata{
-		ID:       queueID,
-		Name:     name,
-		Capacity: capacity,
-	}
-	m.nameIndex[name] = queueID
-	logger.Log.Infof("Created queue: %s (ID: %s), capacity: %d", name, queueID, capacity)
-	return queueID, nil
+	m.queues[meta.ID] = NewRingBufferQueue(meta.Capacity)
+	m.metadata[meta.ID] = meta
+	m.nameIndex[meta.Name] = meta.ID
+	return nil
 }
 
 func (m *QueueManager) GetQueue(id string) (domain.Queue, error) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	q, ok := m.queues[id]
 	if !ok {
-		return nil, errors.New("queue not found")
+		return nil, domain.ErrQueueNotFound
 	}
-
 	return q, nil
 }
 
-func (m *QueueManager) GetQueueByName(name string) (domain.Queue, error) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+func (m *QueueManager) GetMetadata(id string) (domain.QueueMetadata, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	id, ok := m.nameIndex[name]
+	meta, ok := m.metadata[id]
 	if !ok {
-		return nil, errors.New("queue not found")
+		return domain.QueueMetadata{}, domain.ErrQueueNotFound
 	}
-
-	return m.queues[id], nil
+	return meta, nil
 }
 
 func (m *QueueManager) ListQueues() []domain.QueueMetadata {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	result := make([]domain.QueueMetadata, 0, len(m.metadata))
 	for _, meta := range m.metadata {

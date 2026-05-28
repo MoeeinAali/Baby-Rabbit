@@ -1,82 +1,115 @@
 package http
 
 import (
-	"Baby-Rabbit/internal/pkg/logger"
-	"Baby-Rabbit/internal/usecase"
+	"errors"
+	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"Baby-Rabbit/internal/domain"
+	"Baby-Rabbit/internal/usecase"
 )
 
+// Handler adapts HTTP requests to the QueueService inbound port.
+// It depends only on the usecase.QueueService interface, never on
+// repository implementations — preserving the dependency rule.
 type Handler struct {
-	usecase *usecase.QueueUseCase
+	svc usecase.QueueService
 }
 
-func NewHandler(u *usecase.QueueUseCase) *Handler {
-	return &Handler{usecase: u}
-}
-
-type CreateQueueReq struct {
-	Name     string `json:"name"`
-	Capacity int    `json:"capacity"`
-}
-
-type CreateQueueResp struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+func NewHandler(svc usecase.QueueService) *Handler {
+	return &Handler{svc: svc}
 }
 
 func (h *Handler) CreateQueue(c *gin.Context) {
-	var req CreateQueueReq
+	var req createQueueReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, errorResp{Error: err.Error()})
 		return
 	}
-
-	queueID, err := h.usecase.CreateQueue(req.Name, req.Capacity)
+	id, err := h.svc.CreateQueue(req.Name, req.Capacity)
 	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		writeDomainError(c, err)
 		return
 	}
-
-	logger.Log.Infof("HTTP CreateQueue %s with ID %s", req.Name, queueID)
-	c.JSON(200, CreateQueueResp{
-		ID:   queueID,
-		Name: req.Name,
+	c.JSON(http.StatusCreated, createQueueResp{
+		ID:       id,
+		Name:     req.Name,
+		Capacity: req.Capacity,
 	})
-}
-
-type PushReq struct {
-	Value string `json:"value"`
-	TTL   int    `json:"ttl"`
 }
 
 func (h *Handler) Push(c *gin.Context) {
 	queueID := c.Param("queue")
-	var req PushReq
+	var req pushReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, errorResp{Error: err.Error()})
 		return
 	}
-
-	err := h.usecase.Push(queueID, req.Value, req.TTL)
-	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	ttl := time.Duration(req.TTL) * time.Second
+	if err := h.svc.Push(queueID, req.Value, ttl); err != nil {
+		writeDomainError(c, err)
 		return
 	}
-
-	logger.Log.Infof("HTTP Push to queue %s", queueID)
-	c.JSON(200, gin.H{"status": "ok"})
+	c.JSON(http.StatusAccepted, gin.H{"status": "ok"})
 }
 
 func (h *Handler) Pop(c *gin.Context) {
 	queueID := c.Param("queue")
-
-	msg, err := h.usecase.Pop(queueID)
+	msg, err := h.svc.Pop(queueID)
 	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		writeDomainError(c, err)
 		return
 	}
+	c.JSON(http.StatusOK, messageResp{
+		ID:        msg.ID,
+		Value:     msg.Value,
+		CreatedAt: msg.CreatedAt.UTC().Format(time.RFC3339),
+	})
+}
 
-	logger.Log.Infof("HTTP Pop from queue %s, message %s", queueID, msg.ID)
-	c.JSON(200, gin.H{"value": msg.Value})
+func (h *Handler) Status(c *gin.Context) {
+	queueID := c.Param("queue")
+	s, err := h.svc.Status(queueID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, statusResp{
+		ID:       s.ID,
+		Name:     s.Name,
+		Size:     s.Size,
+		Capacity: s.Capacity,
+	})
+}
+
+func (h *Handler) ListQueues(c *gin.Context) {
+	metas := h.svc.ListQueues()
+	out := make([]queueListItem, 0, len(metas))
+	for _, m := range metas {
+		out = append(out, queueListItem{ID: m.ID, Name: m.Name, Capacity: m.Capacity})
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// writeDomainError maps domain errors to HTTP status codes so the
+// inner layers stay transport-agnostic.
+func writeDomainError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, domain.ErrQueueNotFound):
+		c.JSON(http.StatusNotFound, errorResp{Error: err.Error()})
+	case errors.Is(err, domain.ErrQueueAlreadyExists):
+		c.JSON(http.StatusConflict, errorResp{Error: err.Error()})
+	case errors.Is(err, domain.ErrQueueFull):
+		c.JSON(http.StatusConflict, errorResp{Error: err.Error()})
+	case errors.Is(err, domain.ErrQueueEmpty):
+		c.JSON(http.StatusNoContent, nil)
+	case errors.Is(err, domain.ErrInvalidCapacity),
+		errors.Is(err, domain.ErrInvalidName),
+		errors.Is(err, domain.ErrInvalidTTL):
+		c.JSON(http.StatusBadRequest, errorResp{Error: err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, errorResp{Error: err.Error()})
+	}
 }

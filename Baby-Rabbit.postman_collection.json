@@ -2,22 +2,22 @@
 	"info": {
 		"_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
 		"name": "Baby-Rabbit",
-		"description": "Baby-Rabbit is a lightweight in-memory message queue with TTL support, built with Go and Gin.\n\n## Workflow\n1. Create a queue with a name and capacity\n2. Push messages to the queue with a TTL (seconds)\n3. Pop messages from the queue (blocking if empty)\n\n## Variables\n- `base_url`: Server base URL (default: `http://localhost:8080`)\n- `queue_id`: Auto-set after creating a queue",
+		"description": "Baby-Rabbit is a lightweight in-memory message queue with TTL support, designed using Clean Architecture (Go + Gin).\n\n## Workflow\n1. Create a queue with a name and capacity.\n2. Inspect status / list queues.\n3. Push messages with a TTL (seconds; 0 means never expires).\n4. Pop messages (non-blocking; returns 204 No Content when empty).\n\n## Variables\n- `base_url`: Server base URL (default: `http://localhost:8080`).\n- `queue_id`: Auto-set after creating a queue.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
-		{
-			"key": "base_url",
-			"value": "http://localhost:8080",
-			"type": "string"
-		},
-		{
-			"key": "queue_id",
-			"value": "",
-			"type": "string"
-		}
+		{ "key": "base_url", "value": "http://localhost:8080", "type": "string" },
+		{ "key": "queue_id", "value": "", "type": "string" }
 	],
 	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"url": { "raw": "{{base_url}}/healthz", "host": ["{{base_url}}"], "path": ["healthz"] },
+				"description": "Liveness probe. Returns 200 when the server is up."
+			}
+		},
 		{
 			"name": "Create Queue",
 			"event": [
@@ -26,12 +26,12 @@
 					"script": {
 						"type": "text/javascript",
 						"exec": [
-							"if (pm.response.code === 200) {",
+							"if (pm.response.code === 201) {",
 							"    var jsonData = pm.response.json();",
 							"    pm.collectionVariables.set(\"queue_id\", jsonData.id);",
-							"    pm.test(\"Queue created successfully\", function () {",
+							"    pm.test(\"Queue created\", function () {",
 							"        pm.expect(jsonData.id).to.be.a(\"string\");",
-							"        pm.expect(jsonData.name).to.be.a(\"string\");",
+							"        pm.expect(jsonData.name).to.eql(\"my-queue\");",
 							"    });",
 							"}"
 						]
@@ -40,148 +40,57 @@
 			],
 			"request": {
 				"method": "POST",
-				"header": [
-					{
-						"key": "Content-Type",
-						"value": "application/json"
-					}
-				],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n    \"name\": \"my-queue\",\n    \"capacity\": 100\n}"
-				},
+				"header": [{ "key": "Content-Type", "value": "application/json" }],
+				"body": { "mode": "raw", "raw": "{\n    \"name\": \"my-queue\",\n    \"capacity\": 100\n}" },
+				"url": { "raw": "{{base_url}}/queues", "host": ["{{base_url}}"], "path": ["queues"] },
+				"description": "Create a queue. Returns 201 on success, 409 if a queue with the same name already exists, 400 on validation errors.\n\n**Request Body**\n- `name` (string, required): Queue name (unique).\n- `capacity` (int, required, >0): Maximum number of messages.\n\n**Response**\n- `id` (string): UUID of the new queue.\n- `name` (string)\n- `capacity` (int)"
+			}
+		},
+		{
+			"name": "List Queues",
+			"request": {
+				"method": "GET",
+				"url": { "raw": "{{base_url}}/queues", "host": ["{{base_url}}"], "path": ["queues"] },
+				"description": "List all queues with their metadata."
+			}
+		},
+		{
+			"name": "Queue Status",
+			"request": {
+				"method": "GET",
 				"url": {
-					"raw": "{{base_url}}/queues",
+					"raw": "{{base_url}}/queues/{{queue_id}}",
 					"host": ["{{base_url}}"],
-					"path": ["queues"]
+					"path": ["queues", "{{queue_id}}"]
 				},
-				"description": "Create a new message queue with a given name and capacity.\n\n**Request Body:**\n- `name` (string): Queue name\n- `capacity` (integer): Maximum number of messages the queue can hold\n\n**Response:**\n- `id` (string): UUID of the created queue\n- `name` (string): Queue name"
-			},
-			"response": [
-				{
-					"name": "Success",
-					"status": "OK",
-					"code": 200,
-					"header": [
-						{
-							"key": "Content-Type",
-							"value": "application/json"
-						}
-					],
-					"body": "{\n    \"id\": \"550e8400-e29b-41d4-a716-446655440000\",\n    \"name\": \"my-queue\"\n}"
-				},
-				{
-					"name": "Queue Already Exists",
-					"status": "Bad Request",
-					"code": 400,
-					"header": [
-						{
-							"key": "Content-Type",
-							"value": "application/json"
-						}
-					],
-					"body": "{\n    \"error\": \"queue already exists\"\n}"
-				}
-			]
+				"description": "Return the current state of a queue.\n\n**Response**\n- `id` (string)\n- `name` (string)\n- `size` (int): Number of messages currently stored.\n- `capacity` (int)\n\nReturns 404 if the queue does not exist."
+			}
 		},
 		{
 			"name": "Push Message",
 			"request": {
 				"method": "POST",
-				"header": [
-					{
-						"key": "Content-Type",
-						"value": "application/json"
-					}
-				],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n    \"value\": \"Hello, Baby-Rabbit!\",\n    \"ttl\": 60\n}"
-				},
+				"header": [{ "key": "Content-Type", "value": "application/json" }],
+				"body": { "mode": "raw", "raw": "{\n    \"value\": \"Hello, Baby-Rabbit!\",\n    \"ttl\": 60\n}" },
 				"url": {
 					"raw": "{{base_url}}/queues/{{queue_id}}/push",
 					"host": ["{{base_url}}"],
 					"path": ["queues", "{{queue_id}}", "push"]
 				},
-				"description": "Push a message onto the specified queue.\n\n**Path Parameters:**\n- `queue_id` (string): UUID of the target queue\n\n**Request Body:**\n- `value` (string): Message content\n- `ttl` (integer): Time-to-live in seconds. The message will be automatically removed after expiration.\n\n**Response:**\n- `status`: \"ok\" on success"
-			},
-			"response": [
-				{
-					"name": "Success",
-					"status": "OK",
-					"code": 200,
-					"header": [
-						{
-							"key": "Content-Type",
-							"value": "application/json"
-						}
-					],
-					"body": "{\n    \"status\": \"ok\"\n}"
-				},
-				{
-					"name": "Queue Full",
-					"status": "Bad Request",
-					"code": 400,
-					"header": [
-						{
-							"key": "Content-Type",
-							"value": "application/json"
-						}
-					],
-					"body": "{\n    \"error\": \"queue full\"\n}"
-				},
-				{
-					"name": "Queue Not Found",
-					"status": "Bad Request",
-					"code": 400,
-					"header": [
-						{
-							"key": "Content-Type",
-							"value": "application/json"
-						}
-					],
-					"body": "{\n    \"error\": \"queue not found\"\n}"
-				}
-			]
+				"description": "Push a message onto a queue.\n\n**Body**\n- `value` (string)\n- `ttl` (int, seconds; 0 means never expires)\n\n**Status codes**\n- 202 Accepted\n- 404 if queue not found\n- 409 if queue is full\n- 400 for invalid TTL"
+			}
 		},
 		{
 			"name": "Pop Message",
 			"request": {
 				"method": "POST",
-				"header": [],
 				"url": {
 					"raw": "{{base_url}}/queues/{{queue_id}}/pop",
 					"host": ["{{base_url}}"],
 					"path": ["queues", "{{queue_id}}", "pop"]
 				},
-				"description": "Pop the next message from the specified queue. This call blocks if the queue is empty, waiting until a message becomes available.\n\n**Path Parameters:**\n- `queue_id` (string): UUID of the target queue\n\n**Response:**\n- `value` (string): The message content"
-			},
-			"response": [
-				{
-					"name": "Success",
-					"status": "OK",
-					"code": 200,
-					"header": [
-						{
-							"key": "Content-Type",
-							"value": "application/json"
-						}
-					],
-					"body": "{\n    \"value\": \"Hello, Baby-Rabbit!\"\n}"
-				},
-				{
-					"name": "Queue Not Found",
-					"status": "Bad Request",
-					"code": 400,
-					"header": [
-						{
-							"key": "Content-Type",
-							"value": "application/json"
-						}
-					],
-					"body": "{\n    \"error\": \"queue not found\"\n}"
-				}
-			]
+				"description": "Pop the next non-expired message (non-blocking).\n\n**Status codes**\n- 200 with `{id, value, created_at}`\n- 204 when the queue is empty (or only expired messages)\n- 404 if the queue does not exist"
+			}
 		}
 	]
 }

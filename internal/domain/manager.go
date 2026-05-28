@@ -1,8 +1,9 @@
 package domain
 
+// QueueManager is the port for the collection of queues.
 type QueueManager interface {
-	CreateQueue(name string, capacity int) (string, error)
+	CreateQueue(meta QueueMetadata) error
 	GetQueue(id string) (Queue, error)
-	GetQueueByName(name string) (Queue, error)
+	GetMetadata(id string) (QueueMetadata, error)
 	ListQueues() []QueueMetadata
 }

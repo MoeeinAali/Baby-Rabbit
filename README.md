@@ -1,383 +1,222 @@
-# 🐰 Baby-Rabbit
+# Baby-Rabbit
 
-A high-performance, thread-safe queue service with TTL (Time-To-Live) support built in Go.
+A small, in-memory, RabbitMQ-style message broker written in Go and designed
+as a textbook example of **Clean Architecture**. Built as the practical part
+of the *Microservice Systems Design* (CE222-MS) Assignment 2 at Sharif
+University of Technology.
 
----
-
-## ✨ Features
-
-- **Ring Buffer Queue**: Circular queues for optimal performance
-- **TTL Support**: Each message can have an expiration time
-- **Thread-Safe**: Using Mutex and Condition Variables for thread safety
-- **Automatic Cleanup**: Automatic service to remove expired messages
-- **Human-Readable Logs**: Clear and understandable logging
-- **RESTful API**: HTTP interface for easy interaction
-- **Clean Architecture**: Clean and maintainable architecture
+The service exposes a REST/HTTP API for creating named queues, pushing and
+popping messages, inspecting status, and listing queues. Messages carry a
+TTL and are removed lazily on `Pop` and proactively by a background sweeper.
 
 ---
 
-## 🏗️ Architecture & Design
+## Features
 
-### Clean Architecture
+| Requirement (from the brief) | Where it lives |
+|---|---|
+| `push` / `pop` | `usecase.QueueUseCase` → `repository.RingBufferQueue` |
+| Queue status (`size`, `capacity`) | `GET /queues/:id` → `usecase.QueueUseCase.Status` |
+| Configurable capacity per queue | `domain.QueueMetadata.Capacity` |
+| Per-message TTL | `domain.Message.TTL` + `service.TTLCleaner` |
+| HTTP/REST transport | `internal/delivery/http` |
+| In-memory storage | `internal/repository` |
 
-This project is designed based on **Clean Architecture** principles:
+---
 
-```mermaid
-graph TB
-    subgraph "Delivery Layer"
-        HTTP["HTTP Handler<br/>(handler.go)"]
-    end
-    
-    subgraph "Usecase Layer"
-        UC["Queue Use Case<br/>(queue_usecase.go)"]
-    end
-    
-    subgraph "Domain Layer"
-        DM["Domain Models<br/>(manager.go, queue.go, message.go)"]
-    end
-    
-    subgraph "Repository Layer"
-        QM["Queue Manager<br/>(queue_manager.go)"]
-        RBQ["Ring Buffer Queue<br/>(ring_buffer_queue.go)"]
-    end
-    
-    subgraph "Service Layer"
-        TTL["TTL Cleaner<br/>(ttl_cleaner.go)"]
-    end
-    
-    subgraph "Infrastructure"
-        LOG["Logger<br/>(logger.go)"]
-    end
-    
-    HTTP -->|uses| UC
-    UC -->|depends on| DM
-    UC -->|uses| QM
-    QM -->|uses| RBQ
-    RBQ -->|implements| DM
-    TTL -->|uses| QM
-    QM -.->|logging| LOG
-    RBQ -.->|logging| LOG
+## Clean Architecture
+
+The codebase strictly follows the dependency rule: **source code dependencies
+only point inward**.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  cmd/server (composition root: wires concrete adapters)      │
+└──────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+    ┌──────────────┐  ┌──────────────┐  ┌────────────────┐
+    │  delivery/   │  │  repository/ │  │  service/      │
+    │   http       │  │ (RingBuffer, │  │ (TTLCleaner)   │
+    │              │  │  QueueMgr)   │  │                │
+    └──────┬───────┘  └──────┬───────┘  └────────┬───────┘
+           │                 │                   │
+           ▼                 ▼                   ▼
+    ┌─────────────────────────────────────────────────────┐
+    │            usecase  (application logic)             │
+    │   QueueService port, IDGenerator port, Clock port   │
+    └────────────────────────┬────────────────────────────┘
+                             ▼
+    ┌─────────────────────────────────────────────────────┐
+    │           domain  (entities + ports)                │
+    │   Message, Queue, QueueManager, errors, status      │
+    └─────────────────────────────────────────────────────┘
 ```
 
-### Layer Descriptions:
+### Layer responsibilities
 
-#### 1. **Delivery Layer**
-   - Responsible for receiving HTTP requests
-   - Converts client requests into system commands
-   - Returns responses
+1. **`domain/`** — Pure language constructs. Defines the `Message` entity,
+   the `Queue` and `QueueManager` ports, the `QueueStatus` value object,
+   and the catalogue of business errors (`ErrQueueFull`, `ErrQueueEmpty`,
+   `ErrQueueNotFound`, …). No imports of frameworks or third-party
+   libraries. Stable, replaceable nowhere.
 
-#### 2. **Use Case Layer**
-   - Contains the main business logic
-   - Independent of implementation details
-   - Acts as a bridge between Delivery and Domain/Repository
+2. **`usecase/`** — Application use cases. Exposes the inbound port
+   `QueueService` consumed by the delivery layer and outbound ports
+   `IDGenerator` and `Clock` so the use case does not depend on
+   `uuid` or `time.Now` directly. This is where Dependency Inversion
+   buys you testability — see the unit tests for proof.
 
-#### 3. **Domain Layer**
-   - Defines core interfaces (`Queue`, `QueueManager`)
-   - Defines data models (`Message`)
-   - No dependencies on frameworks
+3. **`repository/`** — Adapters that implement the domain ports with a
+   thread-safe in-memory ring buffer. Holds no business rules.
 
-#### 4. **Repository Layer**
-   - Concrete implementation of Queue
-   - Uses Ring Buffer for memory efficiency
-   - Manages data access
+4. **`delivery/http/`** — Gin-based adapter. Handlers depend on the
+   `usecase.QueueService` interface (never the concrete type), translate
+   DTOs ↔ domain types, and map domain errors to HTTP status codes in a
+   single place (`writeDomainError`). Swapping Gin for gRPC, Fiber, or
+   chi would only touch this directory.
 
-#### 5. **Service Layer**
-   - Background services (TTL Cleaner)
-   - Recurring tasks
+5. **`service/`** — Background workers. `TTLCleaner.Run(ctx)` sweeps
+   expired messages on every tick and exits gracefully when the context
+   is cancelled.
 
-#### 6. **Infrastructure**
-   - Logger and utility tools
+6. **`pkg/`** — Pure infrastructure: `idgen.UUID`, `clock.Real`, `logger`.
+   These are *concrete* and depend on third-party libraries, but the
+   inner layers only ever know about them through tiny interfaces.
+
+7. **`cmd/server/`** — The composition root. The only place where every
+   concrete type meets. Wires the dependency graph, installs signal
+   handlers, runs the HTTP server, and shuts everything down cleanly.
+
+### Why this matters
+
+- **DIP in action.** `QueueUseCase` declares `IDGenerator` and `Clock`
+  interfaces *inside the application layer* (input/output ports). The
+  outer layer must conform to them, not the other way around.
+- **Framework independence.** The domain and use cases never import
+  `gin`, `uuid`, or `zap`. You could compile the inner half of the
+  binary without any HTTP framework at all.
+- **Testability.** `internal/usecase/queue_usecase_test.go` substitutes
+  `seqID` for `uuid` and `fixedClock` for the wall clock with no
+  ceremony — the seam already exists in the design.
+- **Single error vocabulary.** Business failures travel as typed
+  `domain.Err*` values from the inner layers and are mapped to HTTP
+  status codes exactly once, at the boundary. No string-matching, no
+  leaking of HTTP concepts inward.
 
 ---
 
-## 📁 Project Structure
+## Project layout
 
 ```
 Baby-Rabbit/
-│
 ├── cmd/
 │   └── server/
-│       └── main.go              # Application entry point
-│
-├── internal/                    # Private code
+│       └── main.go              # composition root + graceful shutdown
+├── internal/
+│   ├── domain/                  # entities + ports + errors
+│   │   ├── errors.go
+│   │   ├── manager.go
+│   │   ├── message.go
+│   │   └── queue.go
+│   ├── usecase/                 # application logic
+│   │   ├── port.go              # QueueService / IDGenerator / Clock
+│   │   ├── queue_usecase.go
+│   │   └── queue_usecase_test.go
+│   ├── repository/              # adapter: in-memory ring buffer
+│   │   ├── queue_manager.go
+│   │   ├── ring_buffer_queue.go
+│   │   └── ring_buffer_queue_test.go
 │   ├── delivery/
-│   │   └── http/
-│   │       └── handler.go       # HTTP Handlers
-│   │
-│   ├── domain/                  # Domain Models
-│   │   ├── manager.go          # QueueManager interface
-│   │   ├── queue.go            # Queue interface
-│   │   └── message.go          # Message model
-│   │
-│   ├── repository/             # Data Access Layer
-│   │   ├── queue_manager.go    # QueueManager implementation
-│   │   └── ring_buffer_queue.go # Queue implementation with Ring Buffer
-│   │
-│   ├── service/                # Business Services
-│   │   └── ttl_cleaner.go      # TTL cleanup service
-│   │
-│   ├── usecase/                # Use Cases
-│   │   └── queue_usecase.go    # Queue business logic
-│   │
+│   │   └── http/                # adapter: Gin HTTP transport
+│   │       ├── dto.go
+│   │       ├── handler.go
+│   │       └── router.go
+│   ├── service/
+│   │   └── ttl_cleaner.go       # background sweeper
 │   └── pkg/
-│       └── logger/
-│           └── logger.go       # Logging system
-│
-├── go.mod                       # Module specifications
-├── go.sum                       # Lock File
-└── README.md                    # This file
+│       ├── clock/clock.go
+│       ├── idgen/uuid.go
+│       └── logger/logger.go
+├── Baby-Rabbit.postman_collection.json
+├── go.mod
+└── README.md
 ```
 
 ---
 
-## 🚀 Installation & Setup
+## Running
 
-### Prerequisites
-
-- **Go** version 1.20 or later
-- **git** for cloning
-
-### Installation Steps
-
-1. **Clone the project:**
 ```bash
-git clone https://github.com/yourusername/Baby-Rabbit.git
-cd Baby-Rabbit
+go run ./cmd/server
+# server listens on :8080
 ```
 
-2. **Download Dependencies:**
+Run the test suite:
+
 ```bash
-go mod download
-```
-
-3. **Build the application (optional):**
-```bash
-go build -o baby-rabbit ./cmd/server
-```
-
-4. **Run the application:**
-```bash
-go run ./cmd/server/main.go
-```
-
-The server will run at `http://localhost:8080`.
-
----
-
-## 📡 API Endpoints
-
-### 1. Create a New Queue
-
-**Endpoint:**
-```
-POST /queues
-```
-
-**Request:**
-```json
-{
-  "name": "my-queue",
-  "capacity": 100
-}
-```
-
-**Success Response:**
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "name": "my-queue"
-}
-```
-
-**Response Fields:**
-- `id` (string): Unique identifier (UUID) for the queue
-- `name` (string): Queue name
-
-**Example with cURL:**
-```bash
-curl -X POST http://localhost:8080/queues \
-  -H "Content-Type: application/json" \
-  -d '{"name":"my-queue","capacity":100}'
+go test ./...
 ```
 
 ---
 
-### 2. Push Message to Queue
+## HTTP API
 
-**Endpoint:**
-```
-POST /queues/:queue/push
-```
+| Method | Path                       | Purpose                              | Success | Errors                           |
+|--------|----------------------------|--------------------------------------|---------|----------------------------------|
+| GET    | `/healthz`                 | Liveness probe                       | 200     | —                                |
+| POST   | `/queues`                  | Create a queue                       | 201     | 400 (bad input), 409 (duplicate) |
+| GET    | `/queues`                  | List queues                          | 200     | —                                |
+| GET    | `/queues/:queue`           | Queue status (`size`, `capacity`)    | 200     | 404                              |
+| POST   | `/queues/:queue/push`      | Enqueue a message (with TTL seconds) | 202     | 400, 404, 409 (full)             |
+| POST   | `/queues/:queue/pop`       | Dequeue next non-expired message     | 200     | 204 (empty), 404                 |
 
-**Parameters:**
-- `queue`: Queue ID (UUID)
-
-**Request:**
-```json
-{
-  "value": "Hello, World!",
-  "ttl": 3600
-}
-```
-
-**Request Fields:**
-- `value` (string): Message content
-- `ttl` (integer): Expiration time in seconds
-
-**Success Response:**
-```json
-{
-  "status": "ok"
-}
-```
-
-**Example with cURL:**
-```bash
-curl -X POST http://localhost:8080/queues/550e8400-e29b-41d4-a716-446655440000/push \
-  -H "Content-Type: application/json" \
-  -d '{"value":"Hello, World!","ttl":3600}'
-```
-
----
-
-### 3. Pop Message from Queue
-
-**Endpoint:**
-```
-POST /queues/:queue/pop
-```
-
-**Parameters:**
-- `queue`: Queue ID (UUID)
-
-**Success Response:**
-```json
-{
-  "value": "Hello, World!"
-}
-```
-
-**Example with cURL:**
-```bash
-curl -X POST http://localhost:8080/queues/550e8400-e29b-41d4-a716-446655440000/pop \
-  -H "Content-Type: application/json"
-```
-
----
-
-## 💡 Usage Examples
-
-### Example 1: Basic Usage
+### Examples
 
 ```bash
-# 1. Create a queue
-curl -X POST http://localhost:8080/queues \
-  -H "Content-Type: application/json" \
-  -d '{"name":"messages","capacity":50}'
+# create
+curl -sX POST localhost:8080/queues \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"orders","capacity":100}'
+# {"id":"…","name":"orders","capacity":100}
 
-# 2. Push a message
-curl -X POST http://localhost:8080/queues/messages/push \
-  -H "Content-Type: application/json" \
-  -d '{"value":"Message 1","ttl":300}'
+# push with 60s TTL (0 = never expires)
+curl -sX POST localhost:8080/queues/<id>/push \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"hello","ttl":60}'
 
-# 3. Pop a message
-curl -X POST http://localhost:8080/queues/messages/pop \
-  -H "Content-Type: application/json"
+# status
+curl -s localhost:8080/queues/<id>
+# {"id":"…","name":"orders","size":1,"capacity":100}
+
+# pop
+curl -sX POST localhost:8080/queues/<id>/pop
+# {"id":"…","value":"hello","created_at":"…"}
+
+# pop again → 204 No Content
 ```
 
-### Example 2: Long-lived TTL
-
-```bash
-# Queue for long-running tasks
-curl -X POST http://localhost:8080/queues \
-  -H "Content-Type: application/json" \
-  -d '{"name":"long-tasks","capacity":100}'
-
-# Message with 24-hour TTL
-curl -X POST http://localhost:8080/queues/long-tasks/push \
-  -H "Content-Type: application/json" \
-  -d '{"value":"Process overnight","ttl":86400}'
-```
-
-### Example 3: High-Traffic Queue
-
-```bash
-# Queue with large capacity
-curl -X POST http://localhost:8080/queues \
-  -H "Content-Type: application/json" \
-  -d '{"name":"high-traffic","capacity":10000}'
-
-# Add multiple messages
-for i in {1..100}; do
-  curl -X POST http://localhost:8080/queues/high-traffic/push \
-    -H "Content-Type: application/json" \
-    -d "{\"value\":\"Message $i\",\"ttl\":600}"
-done
-```
+A Postman collection is included: `Baby-Rabbit.postman_collection.json`.
 
 ---
 
-## 🔧 Clean Architecture Implementation
+## Concurrency & lifecycle
 
-### How Clean Architecture Principles Are Applied:
-
-#### 1. **Separation of Concerns**
-   - Each layer has a specific responsibility
-   - Changes in one layer have minimal impact on other layers
-
-#### 2. **Dependency Inversion**
-   - Upper layers depend on interfaces, not concrete implementations
-   - Example: `UseCase` depends on `QueueManager` interface, not the struct
-
-#### 3. **Testability**
-   - Interfaces allow creating Mock Objects
-   - Each layer can be tested independently
-
-#### 4. **Framework Independence**
-   - Domain Layer is completely independent
-   - HTTP framework can be replaced without affecting business logic
+- Each `RingBufferQueue` is guarded by a `sync.Mutex`.
+- `QueueManager` uses an `RWMutex` so reads scale.
+- `Pop` is **non-blocking** by design: an HTTP request must not hang
+  forever waiting on a message — clients should poll or retry.
+- The TTL sweeper runs in a goroutine, takes a `context.Context`, and
+  stops cleanly on `SIGINT` / `SIGTERM`. The HTTP server is shut down
+  with a 5-second grace window.
 
 ---
 
-## 📊 Architecture Analysis
+## Third-party packages
 
-### Design Patterns Used:
-
-1. **Domain-Driven Design (DDD)**
-   - Focus on Domain Models
-   - Models represent business reality
-
-2. **Repository Pattern**
-   - Separation of data access from business logic
-   - Ability to change data sources
-
-3. **Dependency Injection**
-   - Dependencies passed from outside
-   - Increased flexibility
-
-4. **Producer-Consumer Pattern**
-   - Queues for communication between Producer and Consumer
-   - Synchronization with Condition Variables
-
-5. **Adapter Pattern**
-   - HTTP Handler to convert HTTP requests
-
----
-
-## 🔐 Thread Safety
-
-- Uses `sync.Mutex` to protect shared data
-- `sync.Cond` for synchronization between goroutines
-- Ring Buffer implementation for optimal memory usage
-
----
-
-## 📝 Logging
-
-The logging system uses **Zap Logger** in Development Mode:
-
-```
-2026-03-06T10:30:04+01:00	INFO	Starting Baby-Rabbit server...
-2026-03-06T10:30:05+01:00	INFO	Created queue: my-queue, capacity: 100
-```
-
+| Package | Why |
+|---|---|
+| `github.com/gin-gonic/gin` | Minimal HTTP router used only in the delivery adapter. |
+| `github.com/google/uuid`   | UUID v4 generation; isolated behind the `IDGenerator` port. |
+| `go.uber.org/zap`          | Structured logging, used only in the outer infrastructure. |
